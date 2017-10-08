@@ -33,6 +33,7 @@
 #include <sys/stat.h>
 #include <sys/ioctl.h>
 #include <sys/disk.h>
+#include <sys/mount.h>
 
 #include <assert.h>
 #include <fcntl.h>
@@ -213,6 +214,8 @@ block_delete(struct blockif_ctxt *bc, off_t offset, off_t len)
 	int ret = -1;
 #ifdef __FreeBSD__
 	off_t arg[2] = { offset, len };
+#elif __APPLE__
+    struct fpunchhole arg = { .fp_flags = 0, .reserved = 0, .fp_offset = offset, .fp_length = len };
 #endif
 	if (HYPERKIT_BLOCK_DELETE_ENABLED())
 		HYPERKIT_BLOCK_DELETE(offset, len);
@@ -222,10 +225,17 @@ block_delete(struct blockif_ctxt *bc, off_t offset, off_t len)
 	else if (bc->bc_rdonly)
 		errno = EROFS;
 	if (bc->bc_fd >= 0) {
+		arg.fp_offset = arg.fp_offset / 4096 * 4096;
+		arg.fp_length = arg.fp_length / 4096 * 4096;
+		fprintf(stderr, "fcntl(F_PUNCHHOLE fp_offset=%lld fp_length=%lld)\n", arg.fp_offset, arg.fp_length);
+		ret = fcntl(bc->bc_fd, F_PUNCHHOLE, &arg);
+		fprintf(stderr, "  ret = %d, strerror = %s\n", ret, strerror(errno));
+		ret = 0;
+		errno = 0;
+/*
 		if (bc->bc_ischr) {
 #ifdef __FreeBSD__
 			ret = ioctl(bc->bc_fd, DIOCGDELETE, arg);
-#else
 			errno = EOPNOTSUPP;
 #endif
 		} else
@@ -234,7 +244,7 @@ block_delete(struct blockif_ctxt *bc, off_t offset, off_t len)
 	} else if (bc->bc_mbh >= 0) {
 		ret = mirage_block_delete(bc->bc_mbh, offset, len);
 #endif
-	} else
+	*/} else
 		abort();
 
 	HYPERKIT_BLOCK_DELETE_DONE(offset, ret);
@@ -554,6 +564,7 @@ blockif_open(const char *optstr, const char *ident)
 	char *nopt, *xopts, *cp;
 	struct blockif_ctxt *bc;
 	struct stat sbuf;
+	struct statfs fsbuf;
 	// struct diocgattr_arg arg;
 	off_t size, psectsz, psectoff, blocks;
 	int extra, fd, i, sectsz;
@@ -620,7 +631,7 @@ blockif_open(const char *optstr, const char *ident)
 	if (sync)
 		extra |= O_SYNC;
 
-	candelete = 0;
+	candelete = 1;
 
 	if (use_mirage) {
 #ifdef HAVE_OCAML_QCOW
@@ -635,6 +646,7 @@ blockif_open(const char *optstr, const char *ident)
 			goto err;
 		}
 		candelete = msbuf.candelete;
+		fsbuf.f_bsize = 512; /* qcow assumes 512 byte sectors */
 #else
 		abort();
 #endif
@@ -655,6 +667,10 @@ blockif_open(const char *optstr, const char *ident)
 			perror("Could not stat backing file");
 			goto err;
 		}
+		if (fstatfs(fd, &fsbuf) < 0) {
+			perror("Could not stat backfile file filesystem");
+			goto err;
+		}
 	}
 
 	/* One and only one handle */
@@ -664,7 +680,7 @@ blockif_open(const char *optstr, const char *ident)
 	 * Deal with raw devices
 	 */
 	size = sbuf.st_size;
-	sectsz = DEV_BSIZE;
+	sectsz = (int)fsbuf.f_bsize;
 	psectsz = psectoff = 0;
 	geom = 0;
 	if (S_ISCHR(sbuf.st_mode)) {
@@ -741,6 +757,9 @@ blockif_open(const char *optstr, const char *ident)
 #ifdef HAVE_OCAML_QCOW
 	bc->bc_mbh = mbh;
 #endif
+//sectsz = 512;
+fprintf(stderr, "size=%lld sectsz=%d psectsz=%lld psectoff=%lld\n", size, sectsz, psectsz, psectoff);
+//exit(1);
 	bc->bc_ischr = S_ISCHR(sbuf.st_mode);
 	bc->bc_isgeom = geom;
 	bc->bc_candelete = candelete;

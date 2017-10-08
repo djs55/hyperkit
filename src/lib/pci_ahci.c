@@ -772,7 +772,7 @@ ahci_handle_dsm_trim(struct ahci_port *p, int slot, uint8_t *cfis, uint32_t done
 	uint32_t len, elen;
 	int err, first, ncq;
 	uint8_t buf[512];
-
+fprintf(stderr, "ahci_handle_dsm_trim\r\n");
 	first = (done == 0);
 	if (cfis[2] == ATA_DATA_SET_MANAGEMENT) {
 		len = (uint32_t) ((((uint16_t) cfis[13]) << 8) | cfis[12]);
@@ -956,6 +956,7 @@ handle_identify(struct ahci_port *p, int slot, uint8_t *cfis)
 			buf[60] = 0xffff;
 			buf[61] = 0x0fff;
 		}
+		fprintf(stderr, "identify total size = %04x %04x\r\n", buf[60], buf[61]);
 		buf[63] = 0x7;
 		if (p->xfermode & ATA_WDMA0)
 			buf[63] |= (1 << ((p->xfermode & 7) + 8));
@@ -1007,6 +1008,7 @@ handle_identify(struct ahci_port *p, int slot, uint8_t *cfis)
 			buf[117] = (uint16_t) (sectsz / 2);
 			buf[118] = (uint16_t) ((sectsz / 2) >> 16);
 		}
+		fprintf(stderr, "sectors = %lld psectsz = %d sectsz = %d buf[106] = %04x buf[117] = %02x buf[118] = %02x\r\n", sectors, psectsz, sectsz, buf[106], buf[117], buf[118]);
 		buf[119] = (ATA_SUPPORT_RWLOGDMAEXT | 1 << 14);
 		buf[120] = (ATA_SUPPORT_RWLOGDMAEXT | 1 << 14);
 		buf[222] = 0x1020;
@@ -1723,8 +1725,9 @@ ahci_handle_cmd(struct ahci_port *p, int slot, uint8_t *cfis)
 		ahci_handle_flush(p, slot, cfis);
 		break;
 	case ATA_DATA_SET_MANAGEMENT:
+	fprintf(stderr, "ATA_DATA_SET_MANAGEMENT cfis[11]=%d cfis[3]=%d cfis[13]=%d cfis[12]=%d\r\n", cfis[11], cfis[3], cfis[13], cfis[12]);
 		if (cfis[11] == 0 && cfis[3] == ATA_DSM_TRIM &&
-		    cfis[13] == 0 && cfis[12] == 1) {
+		    cfis[13] == 0 /* && cfis[12] == 1 */) {
 			ahci_handle_dsm_trim(p, slot, cfis, 0);
 			break;
 		}
