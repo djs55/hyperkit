@@ -772,7 +772,6 @@ ahci_handle_dsm_trim(struct ahci_port *p, int slot, uint8_t *cfis, uint32_t done
 	uint32_t len, elen;
 	int err, first, ncq;
 	uint8_t buf[512];
-
 	first = (done == 0);
 	if (cfis[2] == ATA_DATA_SET_MANAGEMENT) {
 		len = (uint32_t) ((((uint16_t) cfis[13]) << 8) | cfis[12]);
@@ -1724,7 +1723,7 @@ ahci_handle_cmd(struct ahci_port *p, int slot, uint8_t *cfis)
 		break;
 	case ATA_DATA_SET_MANAGEMENT:
 		if (cfis[11] == 0 && cfis[3] == ATA_DSM_TRIM &&
-		    cfis[13] == 0 && cfis[12] == 1) {
+		    cfis[13] == 0 /* && cfis[12] == 1 */) {
 			ahci_handle_dsm_trim(p, slot, cfis, 0);
 			break;
 		}
