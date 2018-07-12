@@ -141,6 +141,7 @@ struct msg_response {
  */
 #define	VIRTIO_NET_F_CSUM	(1 <<  0) /* host handles partial cksum */
 #define	VIRTIO_NET_F_GUEST_CSUM	(1 <<  1) /* guest handles partial cksum */
+#define	VIRTIO_NET_F_MTU	(1 <<  3) /* Initial MTU advice */
 #define	VIRTIO_NET_F_MAC	(1 <<  5) /* host supplies MAC */
 #define	VIRTIO_NET_F_GSO_DEPREC	(1 <<  6) /* deprecated: host handles GSO */
 #define	VIRTIO_NET_F_GUEST_TSO4	(1 <<  7) /* guest can rcv TSOv4 */
@@ -160,7 +161,7 @@ struct msg_response {
 				(1 << 21) /* guest can send gratuitous pkts */
 
 #define VTNET_S_HOSTCAPS \
-	(VIRTIO_NET_F_MAC | VIRTIO_NET_F_MRG_RXBUF | VIRTIO_NET_F_STATUS | \
+	(VIRTIO_NET_F_MAC | VIRTIO_NET_F_MTU | VIRTIO_NET_F_MRG_RXBUF | VIRTIO_NET_F_STATUS | \
 	VIRTIO_F_NOTIFY_ON_EMPTY)
 
 /*
@@ -169,6 +170,8 @@ struct msg_response {
 struct virtio_net_config {
 	uint8_t mac[6];
 	uint16_t status;
+	uint16_t max_virtqueue_pairs; /* requires VIRTIO_NET_F_MQ and VIRTIO_NET_CTRL_MQ */
+	uint16_t mtu;
 } __packed;
 
 /*
@@ -1067,6 +1070,7 @@ pci_vtnet_init(struct pci_devinst *pi, char *opts)
 	sc->vsc_config.mac[3] = sc->state->vif.mac[3];
 	sc->vsc_config.mac[4] = sc->state->vif.mac[4];
 	sc->vsc_config.mac[5] = sc->state->vif.mac[5];
+	sc->vsc_config.mtu = sc->state->vif.mtu;
 
 	/* initialize config space */
 	pci_set_cfgdata16(pi, PCIR_DEVICE, VIRTIO_DEV_NET);
