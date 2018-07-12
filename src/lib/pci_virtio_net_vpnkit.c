@@ -614,6 +614,12 @@ vmn_read(struct vpnkit_state *state, struct iovec *iov, int n) {
 	}
 	remaining = length = (header[0] & 0xff) | ((header[1] & 0xff) << 8);
 
+	length = 0;
+	for (i = 0; i < n; i++) {
+		length += iov[i].iov_len;
+	}
+	i = 0;
+	fprintf(stderr, "vmn_read iovec length = %d; packet = %d\n", length, remaining);
 	while (remaining > 0){
 		size_t batch = min((unsigned long)remaining, iov[i].iov_len);
 		if (really_read(state->fd, iov[i].iov_base, batch) == -1){
