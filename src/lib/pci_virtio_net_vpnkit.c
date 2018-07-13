@@ -738,21 +738,9 @@ static void
 pci_vtnet_tap_tx(struct pci_vtnet_softc *sc, struct iovec *iov, int iovcnt,
 		 int len)
 {
-	static char pad[60]; /* all zero bytes */
-
 	if (!sc->state)
 		return;
 
-	/*
-	 * If the length is < 60, pad out to that and add the
-	 * extra zero'd segment to the iov. It is guaranteed that
-	 * there is always an extra iov available by the caller.
-	 */
-	if (len < 60) {
-		iov[iovcnt].iov_base = pad;
-		iov[iovcnt].iov_len = (size_t)(60 - len);
-		iovcnt++;
-	}
 	vmn_write(sc->state, iov, iovcnt);
 }
 
