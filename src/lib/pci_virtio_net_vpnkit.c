@@ -652,31 +652,35 @@ vmn_read(struct vpnkit_state *state, struct iovec *iov, int n) {
 
 static void
 vmn_write(struct vpnkit_state *state, struct iovec *iov, int n) {
+	static struct iovec to_write[IOV_MAX];
 	uint8_t header[2];
-	size_t length = 0;
-
-	for (int i = 0; i < n; i++) {
-		length += iov[i].iov_len;
-	}
+	int length = iov_length(iov, n);
 
 	assert(length<= state->vif.max_packet_size);
 
-	DPRINTF(("Transmitting packet of length %zd\r\n", length));
+	DPRINTF(("Transmitting packet of length %d\r\n", length));
 	if (pci_vtnet_debug) {
 	  hexdump(iov[0].iov_base, min(iov[0].iov_len, 32));
 #if 0
 	  capture(iov[0].iov_base, iov[0].iov_len);
 #endif
 	}
+
+	/* prepare the vpnkit ethernet frame header */
 	header[0] = (length >> 0) & 0xff;
 	header[1] = (length >> 8) & 0xff;
-	if (really_write(state->fd, &header[0], 2) == -1){
-		DPRINTF(("virtio-net-vpnkit: write failed, pushing ACPI power button"));
-		push_power_button();
+
+	if (n >= IOV_MAX) {
+		fprintf(stderr, "Too many iovecs (%d > %d): dropping packet\n", n, IOV_MAX);
 		return;
 	}
 
-	(void) writev(state->fd, iov, n);
+	/* Prepend the vpnkit ethernet frame header */
+	to_write[0].iov_base = &header[0];
+	to_write[0].iov_len = sizeof(header);
+	memcpy(&to_write[1], iov, sizeof(struct iovec) * (unsigned int) n);
+	(void) writev(state->fd, to_write, n);
+	return;
 }
 
 /*
