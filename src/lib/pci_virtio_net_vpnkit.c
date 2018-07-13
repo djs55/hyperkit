@@ -313,10 +313,10 @@ err:
 	return -1;
 }
 
-static __inline int
-iov_length(struct iovec *iov, int n)
+static __inline unsigned int
+iov_length(struct iovec *iov, unsigned int n)
 {
-	int i = 0, length = 0;
+	unsigned int i = 0, length = 0;
 	while (i < n){
 		length += iov[i].iov_len;
 		i++;
@@ -610,10 +610,32 @@ static void hexdump(unsigned char *buffer, size_t len){
 	printf("\r\n");
 }
 
+static __inline void
+rx_iov_truncate(struct iovec *iov, unsigned int *niov, unsigned int tlen)
+{
+	unsigned int i = 0, length = 0;
+	assert(tlen > 0);
+	while (i < *niov) {
+		length += iov[i].iov_len;
+		if (length > tlen) {
+			/* no additional iovecs are needed */
+			*niov = i;
+			iov[i].iov_len -= (length - tlen);
+			/* if this iovec is now 0 and it's not the first one, drop it */
+			if (iov[i].iov_len == 0 && i > 0) {
+				*niov = *niov - 1;
+			}
+			return;
+		}
+		i++;
+	}
+	return;
+}
+
 static ssize_t
-vmn_read(struct vpnkit_state *state, struct iovec *iov, int n) {
-	uint8_t header[2];
-	int length, remaining, i = 0;
+vmn_read(struct vpnkit_state *state, struct iovec *iov, unsigned int n) {
+	static uint8_t header[2];
+	unsigned int packet_length, buffer_length;
 
 	if (really_read(state->fd, &header[0], 2) == -1){
 		DPRINTF(("virtio-net-vpnkit: read failed, pushing ACPI power button\n"));
@@ -623,38 +645,27 @@ vmn_read(struct vpnkit_state *state, struct iovec *iov, int n) {
 			usleep(1000000);
 		}
 	}
-	remaining = length = (header[0] & 0xff) | ((header[1] & 0xff) << 8);
+	packet_length = ((unsigned)header[0] & 0xff) | (((unsigned)header[1] & 0xff) << 8);
+	buffer_length = iov_length(iov, n);
+	assert(buffer_length >= packet_length);
+	rx_iov_truncate(iov, &n, packet_length);
+	(void) readv(state->fd, iov, (int)n);
 
-	//fprintf(stderr, "vmn_read iovec length = %d; packet = %d\n", iov_length(iov, n), remaining);
-	while (remaining > 0){
-		size_t batch = min((unsigned long)remaining, iov[i].iov_len);
-		if (really_read(state->fd, iov[i].iov_base, batch) == -1){
-			DPRINTF(("virtio-net-vpnkit: read failed, pushing ACPI power button\n"));
-			push_power_button();
-			/* Block reading forever until we shutdown */
-			for (;;){
-				usleep(1000000);
-			}
-		}
-		remaining -= batch;
-		i++;
-		assert(remaining == 0 || i < n);
-	}
-	DPRINTF(("Received packet of %d bytes\r\n", length));
+	DPRINTF(("Received packet of %d bytes\r\n", packet_length));
 	if (pci_vtnet_debug) {
 		hexdump(iov[0].iov_base, min(iov[0].iov_len, 32));
 #if 0
 		capture(iov[0].iov_base, length);
 #endif
 	}
-	return length;
+	return packet_length;
 }
 
 static void
-vmn_write(struct vpnkit_state *state, struct iovec *iov, int n) {
+vmn_write(struct vpnkit_state *state, struct iovec *iov, unsigned int n) {
 	static struct iovec to_write[IOV_MAX];
 	uint8_t header[2];
-	int length = iov_length(iov, n);
+	unsigned int length = iov_length(iov, n);
 
 	assert(length<= state->vif.max_packet_size);
 
@@ -679,7 +690,7 @@ vmn_write(struct vpnkit_state *state, struct iovec *iov, int n) {
 	to_write[0].iov_base = &header[0];
 	to_write[0].iov_len = sizeof(header);
 	memcpy(&to_write[1], iov, sizeof(struct iovec) * (unsigned int) n);
-	(void) writev(state->fd, to_write, n);
+	(void) writev(state->fd, to_write, (int)n);
 	return;
 }
 
@@ -745,15 +756,12 @@ pci_vtnet_reset(void *vsc)
  * Called to send a buffer chain out to the tap device
  */
 static void
-pci_vtnet_tap_tx(struct pci_vtnet_softc *sc, struct iovec *iov, int iovcnt,
-		 int len)
+pci_vtnet_tap_tx(struct pci_vtnet_softc *sc, struct iovec *iov, unsigned int iovcnt,
+		 __unused int len)
 {
 	if (!sc->state)
 		return;
 
-	if (len != (iov_length(iov, iovcnt))) {
-		fprintf(stderr, "XXX vmn_write len=%d iovec.length=%d\n", len, iov_length(iov, iovcnt));
-	}
 	vmn_write(sc->state, iov, iovcnt);
 }
 
@@ -787,29 +795,6 @@ rx_iov_trim(struct iovec *iov, int *niov, int tlen)
 
 	return (riov);
 }
-
-#if 0
-static __inline void
-rc_iov_truncate(struct iovec *iov, int *niov, int tlen)
-{
-	int i = 0, length = 0;
-	assert(tlen > 0);
-	while (i++ < *niov) {
-		length += iov[i].iov_len;
-		if (length > tlen) {
-			/* no additional iovecs are needed */
-			*niov = i;
-			iov[i].iov_len -= (length - tlen);
-			/* if this iovec is now 0 and it's not the first one, drop it */
-			if (iov[i].iov_len == 0 && i > 0) {
-				*niov--;
-			}
-			return;
-		}
-	}
-	return;
-}
-#endif
 
 static void
 pci_vtnet_tap_rx(struct pci_vtnet_softc *sc)
@@ -869,7 +854,7 @@ pci_vtnet_tap_rx(struct pci_vtnet_softc *sc)
 		vrx = iov[0].iov_base;
 		riov = rx_iov_trim(iov, &n, sc->rx_vhdrlen);
 
-		len = (int) vmn_read(sc->state, riov, n);
+		len = (int) vmn_read(sc->state, riov, (unsigned int)n);
 
 		if (len < 0) {
 			/*
@@ -973,7 +958,7 @@ pci_vtnet_proctx(struct pci_vtnet_softc *sc, struct vqueue_info *vq)
 	}
 
 	DPRINTF(("virtio: packet send, %d bytes, %d segs\n\r", plen, n));
-	pci_vtnet_tap_tx(sc, &iov[1], n - 1, plen);
+	pci_vtnet_tap_tx(sc, &iov[1], (unsigned int) (n - 1), plen);
 
 	/* chain is processed, release it and set tlen */
 	vq_relchain(vq, idx, (uint32_t)tlen);
