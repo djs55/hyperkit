@@ -83,7 +83,7 @@
 #define WPRINTF(format, ...) printf(format, __VA_ARGS__)
 
 #define VTNET_RINGSZ 1024
-#define VTNET_MAXSEGS 32
+#define VTNET_MAXSEGS 256
 
 /*
  * wire protocol
@@ -311,6 +311,17 @@ err:
 	/* On error: stop listening to the socket */
 	shutdown(fd, SHUT_WR);
 	return -1;
+}
+
+static __inline int
+iov_length(struct iovec *iov, int n)
+{
+	int i = 0, length = 0;
+	while (i < n){
+		length += iov[i].iov_len;
+		i++;
+	}
+	return length;
 }
 
 /*
@@ -614,12 +625,7 @@ vmn_read(struct vpnkit_state *state, struct iovec *iov, int n) {
 	}
 	remaining = length = (header[0] & 0xff) | ((header[1] & 0xff) << 8);
 
-	length = 0;
-	for (i = 0; i < n; i++) {
-		length += iov[i].iov_len;
-	}
-	i = 0;
-	fprintf(stderr, "vmn_read iovec length = %d; packet = %d\n", length, remaining);
+	//fprintf(stderr, "vmn_read iovec length = %d; packet = %d\n", iov_length(iov, n), remaining);
 	while (remaining > 0){
 		size_t batch = min((unsigned long)remaining, iov[i].iov_len);
 		if (really_read(state->fd, iov[i].iov_base, batch) == -1){
@@ -741,6 +747,9 @@ pci_vtnet_tap_tx(struct pci_vtnet_softc *sc, struct iovec *iov, int iovcnt,
 	if (!sc->state)
 		return;
 
+	if (len != (iov_length(iov, iovcnt))) {
+		fprintf(stderr, "XXX vmn_write len=%d iovec.length=%d\n", len, iov_length(iov, iovcnt));
+	}
 	vmn_write(sc->state, iov, iovcnt);
 }
 
@@ -774,6 +783,29 @@ rx_iov_trim(struct iovec *iov, int *niov, int tlen)
 
 	return (riov);
 }
+
+#if 0
+static __inline void
+rc_iov_truncate(struct iovec *iov, int *niov, int tlen)
+{
+	int i = 0, length = 0;
+	assert(tlen > 0);
+	while (i++ < *niov) {
+		length += iov[i].iov_len;
+		if (length > tlen) {
+			/* no additional iovecs are needed */
+			*niov = i;
+			iov[i].iov_len -= (length - tlen);
+			/* if this iovec is now 0 and it's not the first one, drop it */
+			if (iov[i].iov_len == 0 && i > 0) {
+				*niov--;
+			}
+			return;
+		}
+	}
+	return;
+}
+#endif
 
 static void
 pci_vtnet_tap_rx(struct pci_vtnet_softc *sc)
@@ -1064,6 +1096,7 @@ pci_vtnet_init(struct pci_devinst *pi, char *opts)
 	sc->vsc_config.mac[3] = sc->state->vif.mac[3];
 	sc->vsc_config.mac[4] = sc->state->vif.mac[4];
 	sc->vsc_config.mac[5] = sc->state->vif.mac[5];
+	sc->vsc_config.max_virtqueue_pairs = 1;
 	sc->vsc_config.mtu = sc->state->vif.mtu;
 
 	/* initialize config space */
@@ -1144,12 +1177,22 @@ pci_vtnet_neg_features(void *vsc, uint64_t negotiated_features)
 {
 	struct pci_vtnet_softc *sc = vsc;
 
+	fprintf(stderr, "negotiated_features = %llu\n", negotiated_features);
+
 	sc->vsc_features = negotiated_features;
 
 	if (!(sc->vsc_features & VIRTIO_NET_F_MRG_RXBUF)) {
+		fprintf(stderr, "disabling mergeable buffers\n");
 		sc->rx_merge = 0;
 		/* non-merge rx header is 2 bytes shorter */
-		sc->rx_vhdrlen -= 2;
+		sc->rx_vhdrlen = sizeof(struct virtio_net_rxhdr) - 2;
+	} else {
+		fprintf(stderr, "enabling mergeable buffers\n");
+		sc->rx_merge = 1;
+		sc->rx_vhdrlen = sizeof(struct virtio_net_rxhdr);
+	}
+	if (sc->vsc_features & VIRTIO_NET_F_MTU) {
+		fprintf(stderr, "negotiated VIRTIO_NET_F_MTU\n");
 	}
 }
 
