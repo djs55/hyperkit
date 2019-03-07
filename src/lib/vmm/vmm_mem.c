@@ -29,6 +29,7 @@
 
 #include <stdint.h>
 #include <stdlib.h>
+#include <unistd.h>
 #include <Hypervisor/hv.h>
 #include <Hypervisor/hv_vmx.h>
 #include <xhyve/support/misc.h>
@@ -47,11 +48,13 @@ vmm_mem_alloc(uint64_t gpa, size_t size)
 	void *object;
 
 	object = valloc(size);
-
 	if (!object) {
 		xhyve_abort("vmm_mem_alloc failed\n");
 	}
-
+	sleep(30);
+	/* Write to the region from the host to cause all pages to be allocated */
+	memset(object, 0, size);
+	sleep(30);
 	if (hv_vm_map(object, gpa, size,
 		HV_MEMORY_READ | HV_MEMORY_WRITE | HV_MEMORY_EXEC))
 	{
