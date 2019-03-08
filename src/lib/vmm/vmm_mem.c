@@ -27,6 +27,7 @@
  * $FreeBSD$
  */
 
+#include <unistd.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <Hypervisor/hv.h>
@@ -51,7 +52,9 @@ vmm_mem_alloc(uint64_t gpa, size_t size)
 	if (!object) {
 		xhyve_abort("vmm_mem_alloc failed\n");
 	}
-
+	sleep(30);
+	memset(object, 0, size);
+	sleep(30);
 	if (hv_vm_map(object, gpa, size,
 		HV_MEMORY_READ | HV_MEMORY_WRITE | HV_MEMORY_EXEC))
 	{
