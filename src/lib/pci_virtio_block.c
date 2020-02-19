@@ -124,6 +124,26 @@ struct virtio_blk_hdr {
 	uint64_t	vbh_sector;
 } __packed;
 
+static const char *print_vbh_op(int op) {
+	switch ((unsigned int)op & ~VBH_FLAG_BARRIER){
+	case VBH_OP_READ:
+		return "READ";
+	case VBH_OP_WRITE:
+		return "WRITE";
+	case VBH_OP_FLUSH:
+		return "FLUSH";
+	case VBH_OP_FLUSH_OUT:
+		return "FLUSH_OUT";
+	case VBH_OP_IDENT:
+		return "IDENT";
+	case VBH_OP_DISCARD:
+		return "DISCARD";
+	case VBH_OP_WRITE_ZEROES:
+		return "WRITE_ZEROES";
+	}
+	return "UNKNOWN";
+}
+
 /*
  * Discard / write-zeroes segments
  */
@@ -235,7 +255,7 @@ pci_vtblk_proc(struct pci_vtblk_softc *sc, struct vqueue_info *vq)
 	int i, n;
 	int err;
 	ssize_t iolen;
-	int writeop, type;
+	int expectro, type;
 	struct iovec iov[BLOCKIF_IOV_MAX + 2];
 	uint16_t idx, flags[BLOCKIF_IOV_MAX + 2];
 
@@ -269,23 +289,22 @@ pci_vtblk_proc(struct pci_vtblk_softc *sc, struct vqueue_info *vq)
 	 * we don't advertise the capability.
 	 */
 	type = vbh->vbh_type & ~VBH_FLAG_BARRIER;
-	writeop = (type == VBH_OP_WRITE);
-
+	expectro = (type == VBH_OP_WRITE) || (type == VBH_OP_DISCARD);
 	iolen = 0;
 	for (i = 1; i < n; i++) {
 		/*
-		 * - write op implies read-only descriptor,
+		 * - write/discard op implies read-only descriptor,
 		 * - read/ident op implies write-only descriptor,
 		 * therefore test the inverse of the descriptor bit
 		 * to the op.
 		 */
-		assert(((flags[i] & VRING_DESC_F_WRITE) == 0) == writeop);
+		assert(((flags[i] & VRING_DESC_F_WRITE) == 0) == expectro);
 		iolen += iov[i].iov_len;
 	}
 	io->io_req.br_resid = iolen;
 
 	DPRINTF(("virtio-block: %s op, %zd bytes, %d segs\n\r",
-		 writeop ? "write" : "read/ident", iolen, i - 1));
+		 print_vbh_op(type), iolen, i - 1));
 
 	switch (type) {
 	case VBH_OP_READ:
@@ -295,10 +314,11 @@ pci_vtblk_proc(struct pci_vtblk_softc *sc, struct vqueue_info *vq)
 		err = blockif_write(sc->bc, &io->io_req);
 		break;
 	case VBH_OP_DISCARD:
-		/* We currently limit the discard to one segment */
-		// FIXME: check iov[0] is long enough
-		// FIXME: check for trailing data
-		vbdiscard = (struct virtio_blk_discard_write_zeroes*) iov[0].iov_base;
+		/* We currently limit the discard to one segment in the initial negotiation
+		   so expect exactly one correctly-sized payload descriptor. */
+		assert(iov[1].iov_len = sizeof(struct virtio_blk_discard_write_zeroes));
+		assert(n == 2);
+		vbdiscard = iov[1].iov_base;
 		io->io_req.br_offset = (off_t) vbdiscard->sector * DEV_BSIZE;
 		io->io_req.br_resid = vbdiscard->num_sectors * DEV_BSIZE;
 		err = blockif_delete(sc->bc, &io->io_req);
