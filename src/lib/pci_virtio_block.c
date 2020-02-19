@@ -187,7 +187,7 @@ static void pci_vtblk_notify(void *, struct vqueue_info *);
 static int pci_vtblk_cfgread(void *, int, int, uint32_t *);
 static int pci_vtblk_cfgwrite(void *, int, int, uint32_t);
 
-static struct virtio_consts vtblk_vi_consts = {
+static struct virtio_consts vtblk_vi_consts_defaults = {
 	"vtblk",		/* our name */
 	1,			/* we support 1 virtqueue */
 	sizeof(struct vtblk_config), /* config reg size */
@@ -363,6 +363,7 @@ pci_vtblk_init(struct pci_devinst *pi, char *opts)
 	struct pci_vtblk_softc *sc;
 	off_t size;
 	int i, sectsz, sts, sto;
+	struct virtio_consts *vi_consts;
 
 	if (opts == NULL) {
 		printf("virtio-block: backing device required\n");
@@ -395,8 +396,16 @@ pci_vtblk_init(struct pci_devinst *pi, char *opts)
 
 	pthread_mutex_init(&sc->vsc_mtx, NULL);
 
+	/* Customise the capabilities per-device */
+	vi_consts = (struct virtio_consts*)malloc(sizeof(struct virtio_consts));
+	*vi_consts = vtblk_vi_consts_defaults;
+	if (!blockif_candelete(bctxt)){
+		/* Don't tell the guest we can discard if the backing device doesn't support it */
+		vi_consts->vc_hv_caps &= ~(uint64_t)VTBLK_F_DISCARD;
+	}
+
 	/* init virtio softc and virtqueues */
-	vi_softc_linkup(&sc->vbsc_vs, &vtblk_vi_consts, sc, pi, &sc->vbsc_vq);
+	vi_softc_linkup(&sc->vbsc_vs, vi_consts, sc, pi, &sc->vbsc_vq);
 	sc->vbsc_vs.vs_mtx = &sc->vsc_mtx;
 
 	sc->vbsc_vq.vq_qsize = VTBLK_RINGSZ;
