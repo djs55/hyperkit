@@ -416,7 +416,7 @@ func (h *HyperKit) buildArgs(cmdline string) {
 	}
 
 	for _, image := range h.ISOImages {
-		a = append(a, "-s", fmt.Sprintf("%d,virtio-blk,%s", nextSlot, image))
+		a = append(a, "-s", fmt.Sprintf("%d,ahci-cd,%s", nextSlot, image))
 		nextSlot++
 	}
 
